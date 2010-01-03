@@ -215,10 +215,7 @@ var _sprintf_justify = function(sign, prefix, string, suffix, width, leftJustify
 }
 var _sprintf_pad = function(n, ch)
 {
-    var result = "";
-    for (var i = 0; i < n; i++)
-        result += ch;
-    return result;
+    return Array(MAX(0,n)+1).join(ch);
 }
 var base64_map_to = [
         "A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z",
@@ -815,6 +812,11 @@ function objj_dictionary()
     this._buckets = {};
     this.__address = (OBJECT_COUNT++);
 }
+objj_dictionary.prototype.containsKey = function(aKey) { return dictionary_containsKey(this, aKey); }
+objj_dictionary.prototype.getCount = function() { return dictionary_getCount(this); }
+objj_dictionary.prototype.getValue = function(aKey) { return dictionary_getValue(this, aKey); }
+objj_dictionary.prototype.setValue = function(aKey, aValue) { return dictionary_setValue(this, aKey, aValue); }
+objj_dictionary.prototype.removeValue = function(aKey) { return dictionary_removeValue(this, aKey); }
 function dictionary_containsKey(aDictionary, aKey)
 {
     return aDictionary._buckets[aKey] != NULL;
@@ -911,6 +913,8 @@ objj_markedStream.prototype.getMarker = function()
     if (next < 0)
         return NULL;
     var marker = string.substring(location, next);
+    if (marker === 'e')
+        return NULL;
     this._location = next + 1;
     return marker;
 }
@@ -1278,7 +1282,29 @@ _CPPropertyList280NorthSerializers["dictionary"] = function(aDictionary, seriali
     }
     return string + END_MARKER + ';';
 }
-var OBJJ_PLATFORMS = ["browser", "objj"];
+var OBJJ_ENVIRONMENTS = ["ObjJ"];
+var userAgent = window.navigator.userAgent;
+if (userAgent.indexOf("MSIE 7") !== -1)
+    OBJJ_ENVIRONMENTS.unshift("IE7");
+else if (userAgent.indexOf("MSIE 8") !== -1)
+    OBJJ_ENVIRONMENTS.unshift("IE8");
+else
+    OBJJ_ENVIRONMENTS.unshift("W3C");
+function objj_mostEligibleEnvironmentFromArray(environments)
+{
+    var index = 0,
+        count = OBJJ_ENVIRONMENTS.length,
+        innerCount = environments.length;
+    for(; index < count; ++index)
+    {
+        var innerIndex = 0,
+            environment = OBJJ_ENVIRONMENTS[index];
+        for (; innerIndex < innerCount; ++innerIndex)
+            if(environment === environments[innerIndex])
+                return environment;
+    }
+    return NULL;
+}
 var OBJJFileNotFoundException = "OBJJFileNotFoundException",
     OBJJExecutableNotFoundException = "OBJJExecutableNotFoundException";
 var objj_files = { },
@@ -1306,6 +1332,7 @@ function objj_bundle()
 {
     this.path = NULL;
     this.info = NULL;
+    this._URIMap = { };
     this.__address = (OBJECT_COUNT++);
 }
 function objj_getBundleWithPath(aPath)
@@ -1512,26 +1539,11 @@ objj_search.prototype.didReceiveBundleResponse = function(aResponse)
     var executablePath = ((bundle.info)._buckets["CPBundleExecutable"]);
     if (executablePath)
     {
-        var platform = NULL,
-            platforms = ((bundle.info)._buckets["CPBundlePlatforms"]),
-            index = 0,
-            count = OBJJ_PLATFORMS.length,
-            innerCount = platforms.length;
-        for(; index < count; ++index)
-        {
-            var innerIndex = 0,
-                currentPlatform = OBJJ_PLATFORMS[index];
-            for (; innerIndex < innerCount; ++innerIndex)
-                if(currentPlatform === platforms[innerIndex])
-                {
-                    platform = currentPlatform;
-                    break;
-                }
-        }
-        executablePath = platform + ".platform/" + executablePath;
+        var environment = objj_mostEligibleEnvironmentFromArray(((bundle.info)._buckets["CPBundleEnvironments"]));
+        executablePath = environment + ".environment/" + executablePath;
         this.request((aResponse.filePath).substr(0, (aResponse.filePath).lastIndexOf('/') + 1) + executablePath, this.didReceiveExecutableResponse);
         var directory = (aResponse.filePath).substr(0, (aResponse.filePath).lastIndexOf('/') + 1),
-            replacedFiles = ((bundle.info)._buckets["CPBundleReplacedFiles"]),
+            replacedFiles = ((((bundle.info)._buckets["CPBundleReplacedFiles"]))._buckets[environment]),
             index = 0,
             count = replacedFiles.length;
         for (; index < count; ++index)
@@ -1653,6 +1665,7 @@ var objj_request_xmlhttp = function()
 var OBJJUnrecognizedFormatException = "OBJJUnrecognizedFormatException";
 var STATIC_MAGIC_NUMBER = "@STATIC",
     MARKER_PATH = "p",
+    MARKER_URI = "u",
     MARKER_CODE = "c",
     MARKER_BUNDLE = "b",
     MARKER_TEXT = "t",
@@ -1682,6 +1695,11 @@ function objj_decompile(aString, bundle)
                                         file.fragments = [];
                                         files.push(file);
                                         objj_files[file.path] = file;
+                                        break;
+            case MARKER_URI: var URI = stream.getString();
+                                        if (URI.toLowerCase().indexOf("mhtml:") === 0)
+                                            URI = "mhtml:" + (window.location.href).substr(0, (window.location.href).lastIndexOf('/') + 1) + '/' + (bundle.path).substr(0, (bundle.path).lastIndexOf('/') + 1) + '/' + URI.substr("mhtml:".length);
+                                        bundle._URIMap[text] = URI;
                                         break;
             case MARKER_BUNDLE: var bundlePath = (bundle.path).substr(0, (bundle.path).lastIndexOf('/') + 1) + '/' + text;
                                         file.bundle = objj_getBundleWithPath(bundlePath);
@@ -1732,7 +1750,8 @@ function objj_exception_setOutputStream(aStream)
     OBJJ_EXCEPTION_OUTPUT_STREAM = aStream;
 }
 objj_exception_setOutputStream(function(aString) { });
-var OBJJ_PREPROCESSOR_DEBUG_SYMBOLS = 1 << 0;
+var OBJJ_PREPROCESSOR_DEBUG_SYMBOLS = 1 << 0,
+    OBJJ_PREPROCESSOR_TYPE_SIGNATURES = 1 << 1;
 function objj_preprocess( aString, aBundle, aSourceFile, flags)
 {
     try
@@ -1847,14 +1866,17 @@ objj_stringBuffer.prototype.isEmpty = function()
 }
 var objj_preprocessor = function(aString, aSourceFile, aBundle, flags)
 {
+    this._currentSelector = "";
     this._currentClass = "";
     this._currentSuperClass = "";
+    this._currentSuperMetaClass = "";
     this._file = aSourceFile;
     this._fragments = [];
     this._preprocessed = new objj_stringBuffer();
     this._tokens = new objj_lexer(aString);
     this._flags = flags;
     this._bundle = aBundle;
+    this._classMethod = false;
     this.preprocess(this._tokens, this._preprocessed);
     this.fragment();
 }
@@ -1876,16 +1898,16 @@ objj_preprocessor.prototype.accessors = function(tokens)
         var name = token,
             value = true;
         if (!/^\w+$/.test(name))
-            objj_exception_throw(new objj_exception(OBJJParseException, "*** @property attribute name not valid."));
+            objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** @property attribute name not valid.")));
         if ((token = tokens.skip_whitespace()) == TOKEN_EQUAL)
         {
             value = tokens.skip_whitespace();
             if (!/^\w+$/.test(value))
-                objj_exception_throw(new objj_exception(OBJJParseException, "*** @property attribute value not valid."));
+                objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** @property attribute value not valid.")));
             if (name == "setter")
             {
                 if ((token = tokens.next()) != TOKEN_COLON)
-                    objj_exception_throw(new objj_exception(OBJJParseException, "*** @property setter attribute requires argument with \":\" at end of selector name."));
+                    objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** @property setter attribute requires argument with \":\" at end of selector name.")));
                 value += ":";
             }
             token = tokens.skip_whitespace();
@@ -1894,7 +1916,7 @@ objj_preprocessor.prototype.accessors = function(tokens)
         if (token == TOKEN_CLOSE_PARENTHESIS)
             break;
         if (token != TOKEN_COMMA)
-            objj_exception_throw(new objj_exception(OBJJParseException, "*** Expected ',' or ')' in @property attribute list."));
+            objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Expected ',' or ')' in @property attribute list.")));
     }
     return attributes;
 }
@@ -1914,7 +1936,7 @@ objj_preprocessor.prototype.brackets = function( tokens, aStringBuffer)
         if (tuples[0][0].atoms[0] == TOKEN_SUPER)
         {
             aStringBuffer.atoms[aStringBuffer.atoms.length] = "objj_msgSendSuper(";
-            aStringBuffer.atoms[aStringBuffer.atoms.length] = "{ receiver:self, super_class:" + this._currentSuperClass + " }";
+            aStringBuffer.atoms[aStringBuffer.atoms.length] = "{ receiver:self, super_class:" + (this._classMethod ? this._currentSuperMetaClass : this._currentSuperClass ) + " }";
         }
         else
         {
@@ -1977,24 +1999,32 @@ objj_preprocessor.prototype.implementation = function(tokens, aStringBuffer)
         instance_methods = new objj_stringBuffer(),
         class_methods = new objj_stringBuffer();
     if (!(/^\w/).test(class_name))
-        objj_exception_throw(new objj_exception(OBJJParseException, "*** Expected class name, found \"" + class_name + "\"."));
+        objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Expected class name, found \"" + class_name + "\".")));
     this._currentSuperClass = NULL;
+    this._currentSuperMetaClass = NULL;
     this._currentClass = class_name;
+    this._currentSelector = "";
     if((token = tokens.skip_whitespace()) == TOKEN_OPEN_PARENTHESIS)
     {
         token = tokens.skip_whitespace();
         if (token == TOKEN_CLOSE_PARENTHESIS)
-            objj_exception_throw(new objj_exception(OBJJParseException, "*** Can't Have Empty Category Name for class \"" + class_name + "\"."));
+            objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Can't Have Empty Category Name for class \"" + class_name + "\".")));
         if (tokens.skip_whitespace() != TOKEN_CLOSE_PARENTHESIS)
-            objj_exception_throw(new objj_exception(OBJJParseException, "*** Improper Category Definition for class \"" + class_name + "\"."));
+            objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Improper Category Definition for class \"" + class_name + "\".")));
         buffer.atoms[buffer.atoms.length] = "{\nvar the_class = objj_getClass(\"" + class_name + "\")\n";
         buffer.atoms[buffer.atoms.length] = "if(!the_class) objj_exception_throw(new objj_exception(OBJJClassNotFoundException, \"*** Could not find definition for class \\\"" + class_name + "\\\"\"));\n";
         buffer.atoms[buffer.atoms.length] = "var meta_class = the_class.isa;";
         var superclass_name = ((SUPER_CLASSES)._buckets[class_name]);
         if (!superclass_name)
+        {
             this._currentSuperClass = "objj_getClass(\"" + class_name + "\").super_class";
+            this._currentSuperMetaClass = "objj_getMetaClass(\"" + class_name + "\").super_class";
+        }
         else
+        {
             this._currentSuperClass = "objj_getClass(\"" + superclass_name + "\")";
+            this._currentSuperMetaClass = "objj_getMeraClass(\"" + superclass_name + "\")";
+        }
     }
     else
     {
@@ -2002,9 +2032,10 @@ objj_preprocessor.prototype.implementation = function(tokens, aStringBuffer)
         {
             token = tokens.skip_whitespace();
             if (!TOKEN_IDENTIFIER.test(token))
-                objj_exception_throw(new objj_exception(OBJJParseException, "*** Expected class name, found \"" + token + "\"."));
+                objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Expected class name, found \"" + token + "\".")));
             superclass_name = token;
             this._currentSuperClass = "objj_getClass(\"" + superclass_name + "\")";
+            this._currentSuperMetaClass = "objj_getMetaClass(\"" + superclass_name + "\")";
             { if ((SUPER_CLASSES)._buckets[class_name] == NULL) { (SUPER_CLASSES)._keys.push(class_name); ++(SUPER_CLASSES).count; } if (((SUPER_CLASSES)._buckets[class_name] = superclass_name) == NULL) --(SUPER_CLASSES).count;};
             token = tokens.skip_whitespace();
         }
@@ -2038,11 +2069,11 @@ objj_preprocessor.prototype.implementation = function(tokens, aStringBuffer)
                     declaration.push(token);
             }
             if (declaration.length)
-                objj_exception_throw(new objj_exception(OBJJParseException, "*** Expected ';' in ivar declaration, found '}'."));
+                objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Expected ';' in ivar declaration, found '}'.")));
             if (ivar_count)
                 buffer.atoms[buffer.atoms.length] = "]);\n";
             if (!token)
-                objj_exception_throw(new objj_exception(OBJJParseException, "*** Expected '}'"));
+                objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Expected '}'")));
             for (ivar_name in accessors)
             {
                 var accessor = accessors[ivar_name],
@@ -2079,12 +2110,14 @@ objj_preprocessor.prototype.implementation = function(tokens, aStringBuffer)
     {
         if (token == TOKEN_PLUS)
         {
+            this._classMethod = true;
             if (class_methods.atoms.length !== 0)
                 class_methods.atoms[class_methods.atoms.length] = ", ";
             class_methods.atoms[class_methods.atoms.length] = this.method(tokens);
         }
         else if (token == TOKEN_MINUS)
         {
+            this._classMethod = false;
             if (instance_methods.atoms.length !== 0)
                 instance_methods.atoms[instance_methods.atoms.length] = ", ";
             instance_methods.atoms[instance_methods.atoms.length] = this.method(tokens);
@@ -2094,7 +2127,7 @@ objj_preprocessor.prototype.implementation = function(tokens, aStringBuffer)
             if ((token = tokens.next()) == TOKEN_END)
                 break;
             else
-                objj_exception_throw(new objj_exception(OBJJParseException, "*** Expected \"@end\", found \"@" + token + "\"."));
+                objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Expected \"@end\", found \"@" + token + "\".")));
         }
     }
     if (instance_methods.atoms.length !== 0)
@@ -2110,6 +2143,7 @@ objj_preprocessor.prototype.implementation = function(tokens, aStringBuffer)
         buffer.atoms[buffer.atoms.length] = "]);\n";
     }
     buffer.atoms[buffer.atoms.length] = '}';
+    this._currentClass = "";
 }
 objj_preprocessor.prototype._import = function(tokens)
 {
@@ -2122,12 +2156,12 @@ objj_preprocessor.prototype._import = function(tokens)
         while((token = tokens.next()) && token != TOKEN_GREATER_THAN)
             path += token;
         if(!token)
-            objj_exception_throw(new objj_exception(OBJJParseException, "*** Unterminated import statement."));
+            objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Unterminated import statement.")));
     }
     else if (token.charAt(0) == TOKEN_DOUBLE_QUOTE)
         path = token.substr(1, token.length - 2);
     else
-        objj_exception_throw(new objj_exception(OBJJParseException, "*** Expecting '<' or '\"', found \"" + token + "\"."));
+        objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Expecting '<' or '\"', found \"" + token + "\".")));
     this._fragments.push(fragment_create_file(path, NULL, isLocal, this._file));
 }
 objj_preprocessor.prototype.method = function(tokens)
@@ -2135,26 +2169,35 @@ objj_preprocessor.prototype.method = function(tokens)
     var buffer = new objj_stringBuffer(),
         token,
         selector = "",
-        parameters = [];
+        parameters = [],
+        types = [null];
     while((token = tokens.skip_whitespace()) && token != TOKEN_OPEN_BRACE)
     {
         if (token == TOKEN_COLON)
         {
+            var type = "";
             selector += token;
             token = tokens.skip_whitespace();
             if (token == TOKEN_OPEN_PARENTHESIS)
             {
-                while((token = tokens.skip_whitespace()) && token != TOKEN_CLOSE_PARENTHESIS) ;
+                while((token = tokens.skip_whitespace()) && token != TOKEN_CLOSE_PARENTHESIS)
+                    type += token;
                 token = tokens.skip_whitespace();
             }
+            types[parameters.length+1] = type || null;
             parameters[parameters.length] = token;
         }
         else if (token == TOKEN_OPEN_PARENTHESIS)
-            while((token = tokens.skip_whitespace()) && token != TOKEN_CLOSE_PARENTHESIS) ;
+        {
+            var type = "";
+            while((token = tokens.skip_whitespace()) && token != TOKEN_CLOSE_PARENTHESIS)
+                type += token;
+            types[0] = type || null;
+        }
         else if (token == TOKEN_COMMA)
         {
             if ((token = tokens.skip_whitespace()) != TOKEN_PERIOD || tokens.next() != TOKEN_PERIOD || tokens.next() != TOKEN_PERIOD)
-                objj_exception_throw(new objj_exception(OBJJParseException, "*** Argument list expected after ','."));
+                objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Argument list expected after ','.")));
         }
         else
             selector += token;
@@ -2164,6 +2207,7 @@ objj_preprocessor.prototype.method = function(tokens)
     buffer.atoms[buffer.atoms.length] = "new objj_method(sel_getUid(\"";
     buffer.atoms[buffer.atoms.length] = selector;
     buffer.atoms[buffer.atoms.length] = "\"), function";
+    this._currentSelector = selector;
     if (this._flags & OBJJ_PREPROCESSOR_DEBUG_SYMBOLS)
         buffer.atoms[buffer.atoms.length] = " $" + this._currentClass + "__" + selector.replace(/:/g, "_");
     buffer.atoms[buffer.atoms.length] = "(self, _cmd";
@@ -2174,7 +2218,11 @@ objj_preprocessor.prototype.method = function(tokens)
     }
     buffer.atoms[buffer.atoms.length] = ")\n{ with(self)\n{";
     buffer.atoms[buffer.atoms.length] = this.preprocess(tokens, NULL, TOKEN_CLOSE_BRACE, TOKEN_OPEN_BRACE);
-    buffer.atoms[buffer.atoms.length] = "}\n})";
+    buffer.atoms[buffer.atoms.length] = "}\n}";
+    if (this._flags & OBJJ_PREPROCESSOR_DEBUG_SYMBOLS)
+        buffer.atoms[buffer.atoms.length] = ","+JSON.stringify(types);
+    buffer.atoms[buffer.atoms.length] = ")";
+    this._currentSelector = "";
     return buffer;
 }
 objj_preprocessor.prototype.preprocess = function(tokens, aStringBuffer, terminator, instigator, tuple)
@@ -2290,7 +2338,7 @@ objj_preprocessor.prototype.preprocess = function(tokens, aStringBuffer, termina
             buffer.atoms[buffer.atoms.length] = token;
     }
     if (tuple)
-        objj_exception_throw(new objj_exception(OBJJParseException, "*** Expected ']' - Unterminated message send or array."));
+        objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Expected ']' - Unterminated message send or array.")));
     if (!aStringBuffer)
         return buffer;
 }
@@ -2299,10 +2347,10 @@ objj_preprocessor.prototype.selector = function(tokens, aStringBuffer)
     var buffer = aStringBuffer ? aStringBuffer : new objj_stringBuffer();
     buffer.atoms[buffer.atoms.length] = "sel_getUid(\"";
     if (tokens.skip_whitespace() != TOKEN_OPEN_PARENTHESIS)
-        objj_exception_throw(new objj_exception(OBJJParseException, "*** Expected '('"));
+        objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Expected '('")));
     var selector = tokens.skip_whitespace();
     if (selector == TOKEN_CLOSE_PARENTHESIS)
-        objj_exception_throw(new objj_exception(OBJJParseException, "*** Unexpected ')', can't have empty @selector()"));
+        objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Unexpected ')', can't have empty @selector()")));
     aStringBuffer.atoms[aStringBuffer.atoms.length] = selector;
     var token,
         starting = true;
@@ -2314,9 +2362,9 @@ objj_preprocessor.prototype.selector = function(tokens, aStringBuffer)
                 if (tokens.skip_whitespace() == TOKEN_CLOSE_PARENTHESIS)
                     break;
                 else
-                    objj_exception_throw(new objj_exception(OBJJParseException, "*** Unexpected whitespace in @selector()."));
+                    objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Unexpected whitespace in @selector().")));
             else
-                objj_exception_throw(new objj_exception(OBJJParseException, "*** Illegal character '" + token + "' in @selector()."));
+                objj_exception_throw(new objj_exception(OBJJParseException, this.error_message("*** Illegal character '" + token + "' in @selector().")));
         }
         buffer.atoms[buffer.atoms.length] = token;
         starting = (token == TOKEN_COLON);
@@ -2324,6 +2372,12 @@ objj_preprocessor.prototype.selector = function(tokens, aStringBuffer)
     buffer.atoms[buffer.atoms.length] = "\")";
     if (!aStringBuffer)
         return buffer;
+}
+objj_preprocessor.prototype.error_message = function(errorMessage)
+{
+    return errorMessage + " <Context File: "+ this._file.path +
+                                (this._currentClass ? " Class: "+this._currentClass : "") +
+                                (this._currentSelector ? " Method: "+this._currentSelector : "") +">";
 }
 var objj_included_files = { };
 var FRAGMENT_CODE = 1,
@@ -2407,7 +2461,8 @@ function fragment_evaluate_code(aFragment)
     OBJJ_CURRENT_BUNDLE = aFragment.bundle;
     try
     {
-        compiled = new Function(aFragment.info);
+            var functionText = aFragment.info+"/**/\n//@ sourceURL="+aFragment.file.path;
+            compiled = new Function(functionText);
         compiled.displayName = aFragment.file.path;
     }
     catch(anException)
@@ -2470,138 +2525,150 @@ function objj_import( pathOrPaths, isLocal, didCompleteCallback)
     context.didCompleteCallback = didCompleteCallback;
     context.evaluate();
 }
-function objj_backtrace_format(aReceiver, aSelector)
+if (window.OBJJ_MAIN_FILE)
+    objj_import(OBJJ_MAIN_FILE, YES, function() { main(); });
+function objj_debug_object_format(aReceiver)
 {
-    return "[<" + (((aReceiver.info & (CLS_META))) ? aReceiver : aReceiver.isa).name + " " + (typeof sprintf == "function" ? sprintf("%#08x", aReceiver.__address) : aReceiver.__address.toString(16)) + "> " + aSelector + "]";
+    return (aReceiver && aReceiver.isa) ? sprintf("<%s %#08x>", (((aReceiver.info & (CLS_META))) ? aReceiver : aReceiver.isa).name, aReceiver.__address) : String(aReceiver);
 }
-function objj_msgSend_Backtrace( aReceiver, aSelector)
+function objj_debug_message_format(aReceiver, aSelector)
 {
-    if (aReceiver == nil)
-        return nil;
-    objj_debug_backtrace.push(objj_backtrace_format(aReceiver, aSelector));
-    try
-    {
-        var result = class_getMethodImplementation(aReceiver.isa, aSelector).apply(aReceiver, arguments);
-    }
-    catch (anException)
-    {
-        CPLog.error("Exception " + anException + " in " + objj_backtrace_format(aReceiver, aSelector));
-        objj_debug_print_backtrace();
-    }
-    objj_debug_backtrace.pop();
-    return result;
+    return sprintf("[%s %s]", objj_debug_object_format(aReceiver), aSelector);
 }
-function objj_msgSendSuper_Backtrace( aSuper, aSelector)
+var objj_msgSend_original = objj_msgSend,
+    objj_msgSendSuper_original = objj_msgSendSuper;
+function objj_msgSend_reset()
 {
-    objj_debug_backtrace.push(objj_backtrace_format(aSuper.receiver, aSelector));
-    var super_class = aSuper.super_class;
-    arguments[0] = aSuper.receiver;
-    try
-    {
-        var result = class_getMethodImplementation(super_class, aSelector).apply(aSuper.receiver, arguments);
-    }
-    catch (anException)
-    {
-        CPLog.error("Exception " + anException + " in " + objj_backtrace_format(aSuper.receiver, aSelector));
-        objj_debug_print_backtrace();
-    }
-    objj_debug_backtrace.pop();
-    return result;
+    objj_msgSend = objj_msgSend_original;
+    objj_msgSendSuper = objj_msgSendSuper_original;
 }
-function objj_msgSend_Profile( aReceiver, aSelector)
+function objj_msgSend_decorate()
 {
-    if (aReceiver == nil)
-        return nil;
-    var profileRecord = {
-        parent : objj_debug_profile,
-        receiver : (((aReceiver.info & (CLS_META))) ? aReceiver : aReceiver.isa).name,
-        selector : aSelector,
-        calls : []
-    }
-    objj_debug_profile.calls.push(profileRecord);
-    objj_debug_profile = profileRecord;
-    profileRecord.start = new Date();
-    var result = class_getMethodImplementation(aReceiver.isa, aSelector).apply(aReceiver, arguments);
-    profileRecord.end = new Date();
-    objj_debug_profile = profileRecord.parent;
-    return result;
-}
-function objj_msgSendSuper_Profile( aSuper, aSelector)
-{
-    var profileRecord = {
-        parent : objj_debug_profile,
-        receiver : (((aReceiver.info & (CLS_META))) ? aReceiver : aReceiver.isa).name,
-        selector : aSelector,
-        calls : []
-    }
-    objj_debug_profile.calls.push(profileRecord);
-    objj_debug_profile = profileRecord;
-    profileRecord.start = new Date();
-    var super_class = aSuper.super_class;
-    arguments[0] = aSuper.receiver;
-    var result = class_getMethodImplementation(super_class, aSelector).apply(aSuper.receiver, arguments);
-    profileRecord.end = new Date();
-    objj_debug_profile = profileRecord.parent;
-    return result;
-}
-var objj_msgSend_Standard = objj_msgSend,
-    objj_msgSendSuper_Standard = objj_msgSendSuper;
-var objj_debug_backtrace;
-function objj_backtrace_set_enabled(enabled)
-{
-    if (enabled)
+    for (var i = 0; i < arguments.length; i++)
     {
-        objj_debug_backtrace = [];
-        objj_msgSend = objj_msgSend_Backtrace;
-        objj_msgSendSuper = objj_msgSendSuper_Backtrace;
+        objj_msgSend = arguments[i](objj_msgSend);
+        objj_msgSendSuper = arguments[i](objj_msgSendSuper);
+    }
+}
+function objj_msgSend_set_decorators()
+{
+    objj_msgSend_reset();
+    objj_msgSend_decorate.apply(null, arguments);
+}
+var objj_backtrace = [];
+function objj_backtrace_print(stream) {
+    for (var i = 0; i < objj_backtrace.length; i++)
+        objj_fprintf(stream, objj_debug_message_format(objj_backtrace[i].receiver, objj_backtrace[i].selector));
+}
+function objj_backtrace_decorator(msgSend)
+{
+    return function(aReceiverOrSuper, aSelector)
+    {
+        var aReceiver = aReceiverOrSuper && (aReceiverOrSuper.receiver || aReceiverOrSuper);
+        objj_backtrace.push({ receiver: aReceiver, selector : aSelector });
+        try
+        {
+            return msgSend.apply(null, arguments);
+        }
+        catch (anException)
+        {
+            objj_fprintf(warning_stream, "Exception " + anException + " in " + objj_debug_message_format(aReceiver, aSelector));
+            objj_backtrace_print(warning_stream);
+        }
+        finally
+        {
+            objj_backtrace.pop();
+        }
+    }
+}
+var objj_typechecks_reported = {},
+    objj_typecheck_prints_backtrace = false;
+function objj_typecheck_decorator(msgSend)
+{
+    return function(aReceiverOrSuper, aSelector)
+    {
+        var aReceiver = aReceiverOrSuper && (aReceiverOrSuper.receiver || aReceiverOrSuper);
+        if (!aReceiver)
+            return msgSend.apply(null, arguments);
+        var types = aReceiver.isa.method_dtable[aSelector].types;
+        for (var i = 2; i < arguments.length; i++)
+        {
+            try
+            {
+                objj_debug_typecheck(types[i-1], arguments[i]);
+            }
+            catch (e)
+            {
+                var key = [(((aReceiver.info & (CLS_META))) ? aReceiver : aReceiver.isa).name, aSelector, i, e].join(";");
+                if (!objj_typechecks_reported[key]) {
+                    objj_typechecks_reported[key] = true;
+                    objj_fprintf(warning_stream, "Type check failed on argument " + (i-2) + " of " + objj_debug_message_format(aReceiver, aSelector) + ": " + e);
+                    if (objj_typecheck_prints_backtrace)
+                        objj_backtrace_print(warning_stream);
+                }
+            }
+        }
+        var result = msgSend.apply(null, arguments);
+        try
+        {
+            objj_debug_typecheck(types[0], result);
+        }
+        catch (e)
+        {
+            var key = [(((aReceiver.info & (CLS_META))) ? aReceiver : aReceiver.isa).name, aSelector, "ret", e].join(";");
+            if (!objj_typechecks_reported[key]) {
+                objj_typechecks_reported[key] = true;
+                objj_fprintf(warning_stream, "Type check failed on return val of " + objj_debug_message_format(aReceiver, aSelector) + ": " + e);
+                if (objj_typecheck_prints_backtrace)
+                    objj_backtrace_print(warning_stream);
+            }
+        }
+        return result;
+    }
+}
+function objj_debug_typecheck(expectedType, object)
+{
+    var objjClass;
+    if (!expectedType)
+    {
+        return;
+    }
+    else if (expectedType === "id")
+    {
+        if (object !== undefined)
+            return;
+    }
+    else if (expectedType === "void")
+    {
+        if (object === undefined)
+            return;
+    }
+    else if (objjClass = objj_getClass(expectedType))
+    {
+        if (object === nil)
+        {
+            return;
+        }
+        else if (object && object.isa)
+        {
+            var theClass = object.isa;
+            for (; theClass; theClass = theClass.super_class)
+            if (theClass === objjClass)
+                return;
+        }
     }
     else
     {
-        objj_msgSend = objj_msgSend_Standard;
-        objj_msgSendSuper = objj_msgSendSuper_Standard;
-    }
-}
-function objj_debug_print_backtrace()
-{
-    print(objj_debug_backtrace_string());
-}
-function objj_debug_backtrace_string()
-{
-    return objj_debug_backtrace ? objj_debug_backtrace.join("\n") : "";
-}
-var objj_debug_profile = null,
-    objj_currently_profiling = false,
-    objj_profile_cleanup;
-function objj_profile(title)
-{
-    if (objj_currently_profiling)
         return;
-    var objj_msgSend_profile_saved = objj_msgSend,
-        objj_msgSendSuper_profile_saved = objj_msgSendSuper;
-    objj_msgSend = objj_msgSend_Profile;
-    objj_msgSendSuper = objj_msgSendSuper_Profile;
-    var root = { calls: [] };
-    objj_debug_profile = root;
-    var context = {
-        start : new Date(),
-        title : title,
-        profile : root
-    };
-    objj_profile_cleanup = function() {
-        objj_msgSend = objj_msgSend_profile_saved;
-        objj_msgSendSuper = objj_msgSendSuper_profile_saved;
-        context.end = new Date();
-        return context;
     }
-    objj_currently_profiling = true;
+    var actualType;
+    if (object === null)
+        actualType = "null";
+    else if (object === undefined)
+        actualType = "void";
+    else if (object.isa)
+        actualType = (((object.info & (CLS_META))) ? object : object.isa).name;
+    else
+        actualType = typeof object;
+    throw ("expected=" + expectedType + ", actual=" + actualType);
 }
-function objj_profileEnd()
-{
-    if (!objj_currently_profiling)
-        return;
-    objj_debug_profile = null;
-    objj_currently_profiling = false;
-    return objj_profile_cleanup();
-}
-if (window.OBJJ_MAIN_FILE)
-    objj_import(OBJJ_MAIN_FILE, YES, function() { main(); });

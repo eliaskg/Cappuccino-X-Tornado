@@ -28,13 +28,13 @@
 
 @implementation AppController : CPObject
 {
-	CPView _contentView;
-	CPString _nickname;
-	CPTextField _nicknameTextField;
-	CPTextField _chatTextField;
-	CPScrollView _chatPanel;
-	CPPanel _nicknameHUD;
-	CPArray _messages @accessors;
+	CPView			_contentView;
+	CPString		_nickname;
+	CPTextField		_nicknameTextField;
+	CPTextField		_chatTextField;
+	CPScrollView	_chatPanel;
+	CPPanel			_nicknameHUD;
+	CPArray			_messages @accessors;
 	CPCollectionView _messagesCollectionView @accessors;
 }
 
@@ -72,6 +72,7 @@
 	// add the nickname textfield
 	_nicknameTextField = [CPTextField roundedTextFieldWithStringValue:@"" placeholder:@"Nickname" width:150.0];
 	[_nicknameTextField setFrameOrigin:CGPointMake(37, 20)];
+	[_nicknameTextField setTarget:self];
 	[_nicknameTextField setAction:@selector(saveNickname)];
 	[panelContentView addSubview:_nicknameTextField];
 	
@@ -138,12 +139,14 @@
 }
 
 - (void)saveNickname {
-	var theNickname = [_nicknameTextField objectValue]
+	var theNickname = [_nicknameTextField objectValue];
 	if (theNickname) {
 		_nickname = theNickname;
 		[_chatTextField setHidden:NO];
-		[_nicknameHUD orderOut:YES];
-		[[_chatTextField window] makeFirstResponder:_chatTextField];
+		[_nicknameHUD close];
+		
+		// Currently broken in latest build
+		//[[_chatTextField window] makeFirstResponder:_chatTextField];
 		
 		var theUpdateConnection = [[updateConnection alloc] init];
 	}
@@ -182,6 +185,9 @@
 		}
 	}
 	[_messagesCollectionView setContent:_messages];
+	
+	// Scrolls the scrollView down after a new update
+	[[_chatPanel documentView] scrollRectToVisible: CGRectMake(0, CGRectGetHeight([[_chatPanel documentView] bounds])-1, 1, 1)];
 }
 
 - (void)colorChangedValue:(id)sender {

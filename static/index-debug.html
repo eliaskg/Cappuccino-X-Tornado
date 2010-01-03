@@ -5,15 +5,11 @@
 <html xmlns = "http://www.w3.org/1999/xhtml" xml:lang = "en" lang = "en">
 <!--
  index-debug.html
- NewApplication
-
- Created by You on July 5, 2009.
- Copyright 2009, Your Company All rights reserved.
 -->
     <head>
         <meta http-equiv="X-UA-Compatible" content="IE=EmulateIE7" />
 
-        <title>NewApplication</title>
+        <title>Cappuccino X Tornado</title>
 
         <script type = "text/javascript">
             OBJJ_MAIN_FILE = "main.j";
@@ -21,7 +17,22 @@
         </script>
         
         <script src = "Frameworks/Debug/Objective-J/Objective-J.js" type = "text/javascript"></script>
-
+        
+        <script type = "text/javascript">
+            objj_msgSend_reset();
+            
+            // DEBUG OPTIONS:
+            
+            // Uncomment to enable printing of backtraces on exceptions:
+            //objj_msgSend_decorate(objj_backtrace_decorator);
+            
+            // Uncomment to enable runtime type checking:
+            //objj_msgSend_decorate(objj_typecheck_decorator);
+            
+            // Uncomment (along with both above) to print backtraces on type check errors:
+            //objj_typecheck_prints_backtrace = true;
+        </script>
+        
         <style type = "text/css">
             body{margin:0; padding:0;}
             #container {position: absolute; top:50%; left:50%;}
@@ -44,7 +55,7 @@
             <script type = "text/javascript">
                 document.write("<div id='container'><p id='content'>" +
                                "<img id='loadgraphic' width='16' height='16' src='Resources/spinner.gif' /> " +
-                               "Loading NewApplication...</p></div>");
+                               "Loading Cappuccino X Tornado</p></div>");
             </script>
     
             <noscript>
